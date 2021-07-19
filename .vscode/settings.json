@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "log.h": "c",
+        "http_server.h": "c"
+    }
+}
