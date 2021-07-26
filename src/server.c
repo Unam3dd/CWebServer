@@ -7,6 +7,7 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <signal.h>
+#include <string.h>
 
 void handle_signal(int sig)
 {
@@ -125,15 +126,38 @@ uint8_t handle_http_server(http_server_t *server, http_client_t *client)
 {
     print_log("[%t] Processing of %s:%d !\n", inet_ntoa(client->sin.sin_addr), ntohs(client->sin.sin_port));
 
-    if (fd_is_readable(server, client))
+    if (fd_is_readable(server, client) == 0) {
         close_connection(client);
-
-    char buffer[0x100] = {0};
-
-    size_t bytes = read(client->fd, buffer, sizeof(buffer));
-
-    if ((write(STDOUT_FILENO, buffer, bytes)) != bytes)
         return (1);
-    
+    }
+
+    if (handle_read(server, client) < 0) {
+        print_log("[%t] error in handle_read()\n");
+        return (1);
+    }
+
+    http_request_t req;
+    http_response_t res;
+
+    if (parse_request(&client->data, &req)) {
+        print_log("[%t] error in parse_request()\n");
+        return (1);
+    }
+
+    if (parse_headers(&client->data, &req.headers)) {
+        print_log("[%t] error in parse_headers()\n");
+        return (1);
+    }
+
+    parse_body(&client->data, &req);
+
+    for (uint8_t i = 0; http_callbacks[i].method; i++) {
+
+        if (strcmp(req.method, http_callbacks[i].method) == 0)
+            http_callbacks[i].callback(client, &req, &res);
+    }
+
+    free_headers(&req.headers);
+
     return (0);
 }

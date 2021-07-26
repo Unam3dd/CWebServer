@@ -1,5 +1,7 @@
 #include "http_server.h"
 #include <sys/ioctl.h>
+#include <unistd.h>
+
 
 uint8_t fd_is_readable(http_server_t *server, http_client_t *client)
 {
@@ -7,5 +9,12 @@ uint8_t fd_is_readable(http_server_t *server, http_client_t *client)
 
     ioctl(client->fd, FIONREAD, &len);
 
-    return (len ? 0 : 1);
+    return (len);
+}
+
+uint16_t handle_read(http_server_t *server, http_client_t *client)
+{
+    client->data.pos = 0;
+
+    return (read(client->fd, client->data.buffer, HTTP_HEADER_SIZE_DEFAULT));
 }

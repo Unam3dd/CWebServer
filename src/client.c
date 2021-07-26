@@ -14,7 +14,9 @@ http_client_t *create_new_http_client(void)
 
 void delete_http_client(http_client_t *client)
 {
-    free(client);
+    if (client)
+        free(client);
+    
     client = NULL;
 }
 
