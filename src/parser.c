@@ -1,157 +1,134 @@
-#include "http_server.h"
 #include <string.h>
-#include <stdio.h>
+#include <stddef.h>
+#include "http_server.h"
 
-#define IS_SP(chr) (chr == ' ')
+#define IS_SPACE(chr) (chr == ' ')
 #define IS_CRLF(str) (str[0] == '\r' && str[1] == '\n')
 
 uint8_t parse_request(http_buffer_t *buf, http_request_t *req)
 {
-    if (!buf)
-        return (1);
-    
     if (parse_method(buf, req))
         return (1);
-
-    if (parse_path(buf, req))
+    
+    if (parse_uri(buf, req))
         return (1);
     
     if (parse_version(buf, req))
         return (1);
-
-    return (0);
+    
+    if (parse_headers(buf, req))
+        return (1);
+    
+    return (0);   
 }
 
 uint8_t parse_method(http_buffer_t *buf, http_request_t *req)
 {
-    char *tmp = buf->buffer;
-
-    while (*tmp && !IS_SP(*tmp))
-        tmp++;
+    char *tmp = (buf->buf + buf->pos);
     
-    if (*tmp == 0)
+    char *space = strchr(tmp, ' ');
+
+    if (space == NULL)
         return (1);
-
-    *tmp++ = 0;
     
-    req->method = buf->buffer;
-    buf->pos += (tmp - buf->buffer); // point to the next word
+    *space++ = 0;
+    req->method = tmp;
+    buf->pos += (space - tmp);
 
     return (0);
 }
 
-uint8_t parse_path(http_buffer_t *buf, http_request_t *req)
+uint8_t parse_uri(http_buffer_t *buf, http_request_t *req)
 {
-    char *tmp = (buf->buffer + buf->pos);
-    char *original = (buf->buffer + buf->pos);
+    char *tmp = (buf->buf + buf->pos);
 
-    while (*tmp && !IS_SP(*tmp))
-        tmp++;
-    
-    if (*tmp == 0)
+    char *space = strchr(tmp , ' ');
+
+    if (space == NULL)
         return (1);
     
-    *tmp++ = 0;
-
-    req->uri = original;
-    buf->pos += (tmp - original);
+    *space++ = 0;
+    req->uri = tmp;
+    buf->pos += (space - tmp);
 
     return (0);
 }
 
 uint8_t parse_version(http_buffer_t *buf, http_request_t *req)
 {
-    char *tmp = (buf->buffer + buf->pos);
-    char *original = (buf->buffer + buf->pos);
+    char *tmp = (buf->buf + buf->pos);
 
-    while (*tmp && !IS_CRLF(tmp))
-        tmp++;
+    char *crlf = strstr(tmp, "\r\n");
 
-    if (*tmp == 0)
+    if (crlf == NULL && (crlf - tmp) != 8)
         return (1);
-
-    *tmp++ = 0;
-
-    req->http_version = original;
     
-    buf->pos += (tmp - original);
+    *crlf = 0;
+    
+    crlf += 2;
+
+    req->version = tmp;
+    buf->pos += (crlf - tmp);
 
     return (0);
 }
 
-http_headers_t *parse_header(http_buffer_t *buf, http_headers_t *new)
+uint8_t parse_header(http_buffer_t *buf, http_header_t *header)
 {
-    char *tmp = (buf->buffer + buf->pos);
+    char *tmp = strchr((char *) (buf->buf + buf->pos), ':');
 
-    char *original = NULL;
-
-    while (*tmp && *tmp <= 32)
-        tmp++;
-    
-    if (*tmp == 0)
-        return (NULL);
-    
-    original = tmp;
-
-    while (*tmp && *tmp != ':')
-        tmp++;
-    
-    if (*tmp == 0)
-        return (NULL);
-    
-    *tmp = 0;
-    new->key = original;
-    original = ++tmp;
-
-    while (*tmp && !IS_CRLF(tmp))
-        tmp++;
-    
-    if (*tmp == 0)
-        return (NULL);
-    
-    *tmp = 0;
-    new->value = original;
-
-    buf->pos += (tmp - (buf->buffer + buf->pos)) + 2;
-
-    printf("%s", tmp);
-
-    return (new);
-}
-
-uint8_t parse_headers(http_buffer_t *buf, http_headers_t **list)
-{
-    http_headers_t *new_hdr = NULL;
-    char *tmp = NULL;
-
-    *list = new_header();
-
-    if (parse_header(buf, *list) == NULL)
+    if (!tmp)
         return (1);
     
-    tmp = (buf->buffer + buf->pos);
+    *tmp++ = 0;
+    header->key = (char *) (buf->buf + buf->pos);
+    buf->pos += (tmp - (char *)(buf->buf + buf->pos));
 
-    while (*tmp && !IS_CRLF(tmp)) {
+    tmp = strstr((char *) (buf->buf + buf->pos), "\r\n");
 
-        new_hdr = new_header();
+    if (!tmp)
+        return (1);
+    
+    *tmp = 0;
+    header->value = (char *) (buf->buf + buf->pos);
+    
+    tmp += 2;
 
-        if (parse_header(buf, new_hdr) == NULL)
-            return (1);
+    buf->pos += (tmp - (char *)(buf->buf + buf->pos));
+    
+    return (0);
+}
+
+
+uint8_t parse_headers(http_buffer_t *buf, http_request_t *req)
+{
+    http_header_t *hdr = NULL;
+
+    req->headers = new_header();
+    
+    char *ptr = (buf->buf + buf->pos);
+
+    while (*ptr && !IS_CRLF(ptr)) {
         
-        push_header_back(list, new_hdr);
+        if (hdr == NULL) {
 
-        tmp = (buf->buffer + buf->pos);
+            hdr = req->headers;
+            
+            if (parse_header(buf, hdr))
+                return (1);
+                
+        } else {
+
+            hdr = new_header();
+
+            if (parse_header(buf, hdr))
+                return (1);
+
+            push_header_back(&req->headers, hdr);
+        }
+
+        ptr = (buf->buf + buf->pos);
     }
 
     return (0);
-}
-
-void parse_body(http_buffer_t *buf, http_request_t *req)
-{
-    char *tmp = (buf->buffer + buf->pos);
-
-    if (IS_CRLF(tmp))
-        tmp += 2;
-    
-    req->body = tmp;
 }

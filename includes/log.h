@@ -8,3 +8,4 @@ char *int_to_str(int number, char *output);
 void ft_putchar(char c);
 void ft_write_str(char *str);
 void print_log(const char *str, ...);
+void print_error(void);

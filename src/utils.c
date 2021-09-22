@@ -1,24 +1,11 @@
+#include <sys/ioctl.h>
 #include "http_server.h"
-#include <stdio.h>
-#include <stdlib.h>
 
-char *read_file(const char *filename, uint64_t *buffer_size)
+uint8_t fd_is_readable(http_client_t *client)
 {
-    FILE *fp = fopen(filename, "rb");
+    size_t len = 0;
 
-    if (!fp)
-        return (NULL);
+    ioctl(client->fd, FIONREAD, &len);
     
-    fseek(fp, 0L, SEEK_END);
-    *buffer_size = ftell(fp);
-    fseek(fp, 0L, SEEK_SET);
-
-    char *heap = (char *)malloc((sizeof(char) * (*buffer_size) + 1));
-
-    if (fread(heap, sizeof(char), *buffer_size, fp) != *buffer_size)
-        return (NULL);
-    
-    fclose(fp);
-
-    return (heap);
+    return (len ? 0 : 1);
 }

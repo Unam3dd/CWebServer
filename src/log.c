@@ -1,6 +1,9 @@
-#include "log.h"
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
+#include <string.h>
+#include "log.h"
+
 
 char *get_time(char *time_buf)
 {
@@ -91,4 +94,9 @@ void print_log(const char *format, ...)
     }
 
     va_end(parameters);
+}
+
+void print_error(void)
+{
+    print_log("[%t] error : %s\n", strerror(errno));
 }

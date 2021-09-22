@@ -1,37 +1,94 @@
-#include "http_server.h"
-#include "log.h"
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
+#include <netinet/in.h>
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include "http_server.h"
+#include "log.h"
+
+///////////////////////////////////////////////
+//
+//          SIGNAL HANDLER
+//
+///////////////////////////////////////////////
 
 void handle_signal(int sig)
 {
+    // ingore signal
     signal(sig, SIG_IGN);
+
     usleep(2000);
-    print_log("[%t] wait moment....\n");
+
+    print_log("[%t] Closing server...wait moment !\n");
+    
     run = 0;
 }
 
-uint8_t create_http_server(http_server_t *server)
+void http_server_initialize(http_server_t *server)
+{
+    server->start = &http_server_init;
+    server->accept = &http_server_accept;
+    server->wait = &http_server_wait;
+    server->handle = &http_server_handle;
+    server->close = &http_server_close;
+}
+
+void http_server_destroy(http_server_t *server)
+{
+    server->server_fd = -1;
+    server->epoll_fd  = -1;
+    server->start = NULL;
+    server->wait = NULL;
+    server->handle = NULL;
+    server->accept = NULL;
+    server->addr = NULL;
+    server->port = 0;
+    server->close = NULL;
+}
+
+uint8_t http_server_close_client(http_server_t *server, http_client_t *client)
+{
+    if (client->tfd)
+        close(client->tfd);
+    
+    if (client->fd)
+        close(client->fd);
+    
+    print_log("[%t] Client connection closed  %s:%d\n", inet_ntoa(client->sin.sin_addr), ntohs(client->sin.sin_port));
+
+    memset(client->buffer.buf, 0, sizeof(client->buffer.buf));
+    client->buffer.pos = 0;
+    
+    free_client(client);
+
+    return (0);
+}
+
+///////////////////////////////////////////////
+//
+//          HTTP SERVER CALLBACK
+//
+///////////////////////////////////////////////
+
+
+uint8_t http_server_init(http_server_t *server)
 {
     struct sockaddr_in socks = {0};
-    struct epoll_event epoll = {0};
+    struct epoll_event event = {0};
 
-    server->server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-    if (server->server_fd < 0)
+    if ((server->server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
         return (1);
     
+    // Convert address to network byte order
     socks.sin_addr.s_addr = inet_addr(server->addr);
     socks.sin_port = htons(server->port);
-    socks.sin_family = server->family;
+    socks.sin_family = AF_INET;
 
-    if (setsockopt(server->server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)))
+    if (setsockopt(server->server_fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0)
         return (1);
 
     if (bind(server->server_fd, (struct sockaddr *)&socks, sizeof(socks)) < 0)
@@ -40,124 +97,134 @@ uint8_t create_http_server(http_server_t *server)
     if (listen(server->server_fd, SOMAXCONN) < 0)
         return (1);
     
-    server->epoll_fd = epoll_create1(0);
-
-    if (server->epoll_fd < 0)
+    if ((server->epoll_fd = epoll_create1(0)) < 0)
         return (1);
     
-    epoll.data.fd = server->server_fd;
-    epoll.events = EPOLLIN;
-
-    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, server->server_fd, &epoll) < 0)
+    event.data.fd = server->server_fd;
+    event.events = EPOLLIN;
+    
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, server->server_fd, &event) < 0)
         return (1);
     
-    print_log("[%t] Server on  %s:%d !\n", server->addr, server->port);
+    print_log("[%t] Listening on %s:%d\n", server->addr, server->port);
 
     return (0);
 }
 
-uint8_t close_http_server(http_server_t *server)
+void http_server_close(http_server_t *server)
 {
     if (server->epoll_fd)
         close(server->epoll_fd);
     
     if (server->server_fd)
         close(server->server_fd);
-
-    print_log("[%t] Server closed %s:%d !\n", server->addr, server->port);
     
-    return (0);
+    print_log("[%t] Server Closed %s:%d\n", server->addr, server->port);
 }
 
-uint8_t wait_http_server(http_server_t *server)
+void http_server_wait(http_server_t *server)
 {
-    struct epoll_event evs[EVENTS_MAX] = {0};
+    struct epoll_event ev[EPOLL_EVENTS] = {0};
+    http_client_t *client_ptr = NULL;
 
-    int ev_fd = 0, current_fd = 0;
+    int event_fd, current_fd;
 
     signal(SIGINT, handle_signal);
 
     while (run) {
-        ev_fd = epoll_wait(server->epoll_fd, evs, EVENTS_MAX, -1);
+        event_fd = epoll_wait(server->epoll_fd, ev, EPOLL_EVENTS, -1);
 
-        
-        for (current_fd = 0; current_fd < ev_fd; current_fd++) {
+        for (current_fd = 0; current_fd < event_fd; current_fd++) {
 
-            if (evs[current_fd].data.fd == server->server_fd) {
+            if (ev[current_fd].data.fd == server->server_fd) {
 
-                // Handle accept incoming connection
-                http_client_t *client_ptr = create_new_http_client();
-
-                if (accept_http_server(server, client_ptr)) {
-                    print_error();
-                    delete_http_client(client_ptr);
-                }
+                http_client_t *client = new_client();
                 
-            } else
-                handle_http_server(server, (http_client_t *)evs[current_fd].data.ptr);
+                if (server->accept(server, client))
+                    print_error();
+
+            } else {
+                http_client_t *ptr_data = (http_client_t *)ev[current_fd].data.ptr;
+
+                if (ev[current_fd].data.fd == ptr_data->tfd)
+                    http_server_close_client(server, ptr_data);
+                else
+                    server->handle(server, ptr_data);
+            }
         }
     }
 
-    return (0);
-}
+    for (current_fd = 0; ev[current_fd].data.ptr; current_fd++) {
+        
+        if (ev[current_fd].data.fd == server->server_fd)
+            continue;
+        
+        client_ptr = (http_client_t *)ev[current_fd].data.ptr;
 
-uint8_t accept_http_server(http_server_t *server, http_client_t *client)
-{
-    struct epoll_event event = {0};
-
-    socklen_t size_sin = sizeof(client->sin);
-
-    if ((client->fd = accept(server->server_fd, (struct sockaddr *)&client->sin, &size_sin)) < 0)
-        return (1);
-    
-    event.data.fd = client->fd;
-    event.data.ptr = (http_client_t *)client;
-    event.events = EPOLLIN;
-
-    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, client->fd, &event) < 0)
-        return (1);
-    
-    print_log("[%t] New incoming connection %s:%d !\n", inet_ntoa(client->sin.sin_addr), ntohs(client->sin.sin_port));
-
-    return (0);
-}
-
-uint8_t handle_http_server(http_server_t *server, http_client_t *client)
-{
-    print_log("[%t] Processing of %s:%d !\n", inet_ntoa(client->sin.sin_addr), ntohs(client->sin.sin_port));
-
-    if (fd_is_readable(server, client) == 0) {
-        close_connection(client);
-        return (1);
+        http_server_close_client(server, client_ptr);
     }
+}
 
-    if (handle_read(server, client) < 0) {
-        print_log("[%t] error in handle_read()\n");
+uint8_t http_server_accept(http_server_t *server, http_client_t *client)
+{
+    struct epoll_event ev;
+    
+    struct itimerspec timer = {
+        .it_interval = {30, 0},
+        .it_value = {30, 0},
+    };
+
+    if ((client->fd = accept(server->server_fd, (struct sockaddr *)&client->sin, &(socklen_t){sizeof(client->sin)})) < 0)
         return (1);
+    
+    if ((client->tfd = timerfd_create(CLOCK_MONOTONIC, 0)) < 0)
+        return (1);
+    
+    timerfd_settime(client->tfd, 0, &timer, NULL);
+    
+    ev.events = EPOLLIN;
+    ev.data.fd = client->fd;
+    ev.data.ptr = (http_client_t *)client;
+
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, client->fd, &ev) < 0)
+        return (1);
+
+    ev.events = EPOLLIN;
+    ev.data.fd = client->tfd;
+    ev.data.ptr = (http_client_t *)client;
+    
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, client->tfd, &ev) < 0)
+        return (1);
+    
+    print_log("[%t] New incoming connection %s:%d\n", inet_ntoa(client->sin.sin_addr), ntohs(client->sin.sin_port));
+    
+    return (0);
+}
+
+void http_server_handle(http_server_t *server, http_client_t *client)
+{
+    if (fd_is_readable(client)) {
+        http_server_close_client(server, client);
+        return;
     }
 
     http_request_t req;
-    http_response_t res;
 
-    if (parse_request(&client->data, &req)) {
-        print_log("[%t] error in parse_request()\n");
-        return (1);
+    size_t len = read(client->fd, client->buffer.buf, MAX_HEADER_SIZE);
+    
+    client->buffer.buf[len] = 0;
+
+    if (parse_request(&client->buffer, &req)) {
+        print_log("[-] Error parsing request !\n");
+        return;
     }
 
-    if (parse_headers(&client->data, &req.headers)) {
-        print_log("[%t] error in parse_headers()\n");
-        return (1);
-    }
 
-    parse_body(&client->data, &req);
 
-    for (uint8_t i = 0; http_callbacks[i].method; i++) {
+    // HANDLE REQUEST
 
-        if (strcmp(req.method, http_callbacks[i].method) == 0)
-            http_callbacks[i].callback(client, &req, &res);
-    }
+    
+    
 
-    free_headers(&req.headers);
-
-    return (0);
+    free_http_headers(&req.headers);
 }
