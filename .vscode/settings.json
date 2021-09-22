@@ -3,6 +3,7 @@
         "log.h": "c",
         "http_server.h": "c",
         "stdlib.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "http_types.h": "c"
     }
 }

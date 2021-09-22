@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include "http_server.h"
 
-#define IS_SPACE(chr) (chr == ' ')
 #define IS_CRLF(str) (str[0] == '\r' && str[1] == '\n')
 
 uint8_t parse_request(http_buffer_t *buf, http_request_t *req)
