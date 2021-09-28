@@ -10,6 +10,8 @@
 #include "http_server.h"
 #include "log.h"
 
+#include <stdio.h>
+
 ///////////////////////////////////////////////
 //
 //          SIGNAL HANDLER
@@ -35,6 +37,7 @@ void http_server_initialize(http_server_t *server)
     server->wait = &http_server_wait;
     server->handle = &http_server_handle;
     server->close = &http_server_close;
+    server->on = &http_server_set_callback;
 }
 
 void http_server_destroy(http_server_t *server)
@@ -48,10 +51,19 @@ void http_server_destroy(http_server_t *server)
     server->addr = NULL;
     server->port = 0;
     server->close = NULL;
+    server->on = NULL;
 }
 
 uint8_t http_server_close_client(http_server_t *server, http_client_t *client)
 {
+    struct epoll_event ev;
+
+    ev.data.fd = client->tfd;
+    ev.events = EPOLLIN;
+
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, client->tfd, &ev) < 0)
+        return (1);
+
     if (client->tfd)
         close(client->tfd);
     
@@ -219,12 +231,32 @@ void http_server_handle(http_server_t *server, http_client_t *client)
         return;
     }
 
+    http_callbacks_t *callbacks = http_server_get_callbacks(req.method);
+    http_error_t *err = http_get_error(&req);
 
 
-    // HANDLE REQUEST
-
-    
-    
+    if (!callbacks || err)
+        dprintf(client->fd, "HTTP/1.1 501 Not Implemented yet\r\nContent-Length: 30\r\n\r\n<h1>Internal Server Error</h1>\r\n");
+    else
+        callbacks->cb(server, client, &req);
 
     free_http_headers(&req.headers);
+}
+
+
+http_callbacks_t *http_server_get_callbacks(const char *event)
+{
+    for (uint8_t i = 0; cb_table[i].event; i++)
+        if (!strcmp(cb_table[i].event, event))
+            return (&cb_table[i]);
+    
+    return (NULL);
+}
+
+void http_server_set_callback(const char *event, void (*cb_func)(http_server_t *, http_client_t *, http_request_t *))
+{
+    http_callbacks_t *http_cb = http_server_get_callbacks(event);
+
+    if (http_cb)
+        http_cb->cb = cb_func;
 }

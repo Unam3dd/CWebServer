@@ -9,6 +9,7 @@ int main(int argc, char **argv)
 
     server.addr = argv[1];
     server.port = atoi(argv[2]);
+    server.path = "www";
 
     if (server.start(&server))
         print_error();

@@ -11,14 +11,14 @@ uint8_t parse_request(http_buffer_t *buf, http_request_t *req)
     
     if (parse_uri(buf, req))
         return (1);
-    
+        
     if (parse_version(buf, req))
         return (1);
     
     if (parse_headers(buf, req))
         return (1);
     
-    return (0);   
+    return (0);
 }
 
 uint8_t parse_method(http_buffer_t *buf, http_request_t *req)

@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include "http_server.h"
 
 //////////////////////////////////////////////
@@ -87,4 +88,14 @@ void free_http_headers(http_header_t **list)
     }
 
     *list = NULL;
+}
+
+http_header_t *http_get_header(http_header_t **list, char *key)
+{
+    http_header_t *hdr = *list;
+
+    while (hdr && strcmp(hdr->key, key))
+        hdr = hdr->next;
+    
+    return (hdr);
 }
