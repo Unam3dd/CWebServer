@@ -22,8 +22,12 @@ void ft_putchar(char c)
 
 void ft_write_str(char *str)
 {
-    while (*str)
-        ft_putchar(*str++);
+    char *tmp = str;
+    
+    while (*tmp)
+        tmp++;
+    
+    write(1, str, (tmp - str));
 }
 
 char *int_to_str(int number, char *output)
